@@ -1,6 +1,7 @@
 const express = require("express");
 const lojas = express.Router();
-const pool = require("../db/conexao");
+
+const lojasRepository = require("../repositories/lojas.repository");
 
 lojas.post("/", async (req, res) => {
     try {
@@ -10,29 +11,21 @@ lojas.post("/", async (req, res) => {
             return res.status(400).json({
                 erro: "Informe o código e o nome da loja."
             });
-        };
+        }
 
-        const lojaExistente = await pool.query(
-            "SELECT * FROM lojas WHERE cod_loja = $1",
-            [cod_loja]
-        );
+        const lojaExistente = await lojasRepository.buscarLojaPorCodigo(cod_loja);
 
-        if (lojaExistente.rows.length > 0) {
+        if (lojaExistente) {
             return res.status(400).json({
                 erro: "Já existe uma loja com esse código."
             });
-        };
+        }
 
-        const resultado = await pool.query(
-            `INSERT INTO lojas (cod_loja, nome)
-            VALUES ($1, $2)
-            RETURNING *`,
-            [cod_loja, nome]
-        );
+        const lojaCriada = await lojasRepository.criarLoja(cod_loja, nome);
 
         res.status(201).json({
             mensagem: "Loja cadastrada com sucesso!",
-            loja: resultado.rows[0]
+            loja: lojaCriada
         });
 
     } catch (error) {
@@ -46,12 +39,9 @@ lojas.post("/", async (req, res) => {
 
 lojas.get("/", async (req, res) => {
     try {
+        const todasAsLojas = await lojasRepository.listarLojas();
 
-        const resultado = await pool.query(
-            "SELECT * FROM lojas ORDER BY cod_loja"
-        );
-
-        res.status(200).json(resultado.rows);
+        res.status(200).json(todasAsLojas);
 
     } catch (error) {
         console.error(error);
@@ -73,15 +63,9 @@ lojas.put("/:id", async (req, res) => {
             });
         }
 
-        const resultado = await pool.query(
-            `UPDATE lojas
-             SET nome = $1
-             WHERE cod_loja = $2
-             RETURNING *`,
-            [nome, id]
-        );
+        const lojaAtualizada = await lojasRepository.atualizarLoja(id, nome);
 
-        if (resultado.rows.length === 0) {
+        if (!lojaAtualizada) {
             return res.status(404).json({
                 erro: "Loja não encontrada."
             });
@@ -89,7 +73,7 @@ lojas.put("/:id", async (req, res) => {
 
         res.status(200).json({
             mensagem: "Loja atualizada com sucesso!",
-            loja: resultado.rows[0]
+            loja: lojaAtualizada
         });
 
     } catch (error) {
@@ -105,14 +89,9 @@ lojas.delete("/:id", async (req, res) => {
     try {
         const { id } = req.params;
 
-        const resultado = await pool.query(
-            `DELETE FROM lojas
-             WHERE cod_loja = $1
-             RETURNING *`,
-            [id]
-        );
+        const lojaExcluida = await lojasRepository.deletarLoja(id);
 
-        if (resultado.rows.length === 0) {
+        if (!lojaExcluida) {
             return res.status(404).json({
                 erro: "Loja não encontrada."
             });

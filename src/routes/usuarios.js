@@ -1,11 +1,11 @@
 require("dotenv").config();
 const express = require("express");
 const usuarios = express.Router();
-const pool = require("../db/conexao");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-// const { verificarToken } = require("../middlewares/auth");
 const nodemailer = require("nodemailer");
+
+const usuariosRepository = require("../repositories/usuarios.repository");
 
 const transporter = nodemailer.createTransport({
     service: 'gmail', 
@@ -17,12 +17,11 @@ const transporter = nodemailer.createTransport({
 
 usuarios.get("/", async (req, res) => {
     try {
-        const resultado = await pool.query("SELECT * FROM usuarios");
-
-        res.status(200).json(resultado.rows);
+        const todosUsuarios = await usuariosRepository.listarUsuarios();
+        res.status(200).json(todosUsuarios);
     } catch (error) {
         console.log(error);
-        res.status(500).json({erro: "Error ao buscar usuários."})
+        res.status(500).json({erro: "Erro ao buscar usuários."});
     }
 });
 
@@ -32,24 +31,21 @@ usuarios.post("/cadastro", async(req, res)=>{
         
         if(!nome || !matricula || !email || !senha){
             return res.status(400).json({erro: "Preencha todos os campos."});
-        };
+        }
 
-        const usuarioExistente = await pool.query("SELECT * FROM usuarios WHERE email = $1 OR MATRICULA = $2", 
-        [email, matricula]);
+        const usuarioExistente = await usuariosRepository.buscarUsuarioPorEmailOuMatricula(email, matricula);
         
-        if(usuarioExistente.rows.length > 0){
-            return res.status(400).json({erro: "Ocorreu um erro, tente novamente."})
-        };
+        if(usuarioExistente.length > 0){
+            return res.status(400).json({erro: "Ocorreu um erro, tente novamente."});
+        }
 
         const senhaCriptografada = await bcrypt.hash(senha, 10);
 
-        const resultado = await pool.query(
-            `INSERT INTO usuarios (nome, matricula, email, senha) VALUES ($1, $2, $3, $4)
-            RETURNING id_usuario, nome, matricula, email `, [nome, matricula, email, senhaCriptografada]
-        );
+        const usuarioCriado = await usuariosRepository.cadastrarUsuario(nome, matricula, email, senhaCriptografada);
 
-        res.status(201).json({mensagem: "Usuario cadastrado com sucesso!",
-            usuario: resultado.rows[0]
+        res.status(201).json({
+            mensagem: "Usuario cadastrado com sucesso!",
+            usuario: usuarioCriado
         });
         
     } catch (error) {
@@ -57,7 +53,7 @@ usuarios.post("/cadastro", async(req, res)=>{
         res.status(500).json({
             erro: "Erro ao cadastrar usuário."
         });
-    };
+    }
 });
 
 usuarios.post("/login", async (req, res) => {
@@ -68,28 +64,23 @@ usuarios.post("/login", async (req, res) => {
              return res.status(400).json({
                 erro: "E-mail e senha são obrigatórios."
             });
-        };
+        }
 
-        const resultado = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+        const usuario = await usuariosRepository.buscarUsuarioPorEmail(email);
 
-        if (resultado.rows.length === 0) {
+        if (!usuario) {
             return res.status(401).json({
                 erro: "E-mail ou senha inválidos."
             });
-        };
+        }
 
-        const usuario = resultado.rows[0];
-
-        const senhaCorreta = await bcrypt.compare(
-            senha,
-            usuario.senha
-        );
+        const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
 
         if (!senhaCorreta) {
             return res.status(401).json({
                 erro: "E-mail ou senha inválidos."
             });
-        };
+        }
 
          const token = jwt.sign(
             {
@@ -103,16 +94,13 @@ usuarios.post("/login", async (req, res) => {
             }
         );
 
-        await pool.query(
-            "UPDATE usuarios SET token_sessao = $1 WHERE id_usuario = $2",
-            [token, usuario.id_usuario]
-        );
+        await usuariosRepository.atualizarTokenSessao(usuario.id_usuario, token);
 
         res.status(200).json({
             mensagem: "Login realizado com sucesso.",
             token,
             usuario: {
-                id: usuario.id,
+                id: usuario.id_usuario, 
                 nome: usuario.nome,
                 email: usuario.email,
                 id_perfil: usuario.id_perfil
@@ -137,35 +125,18 @@ usuarios.post("/solicitarRecuperacao", async (req, res) => {
             });
         }
 
-        const resultado = await pool.query(
-            "SELECT * FROM usuarios WHERE email = $1",
-            [email]
-        );
+        const usuario = await usuariosRepository.buscarUsuarioPorEmail(email);
 
-        if (resultado.rows.length === 0) {
+        if (!usuario) {
             return res.status(404).json({
                 erro: "Usuário não encontrado."
             });
         }
 
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
-
         const expiracao = new Date(Date.now() + 15 * 60 * 1000);
 
-        console.log(codigo);
-        console.log(expiracao);
-        console.log(email);
-
-        const update = await pool.query(
-            `UPDATE usuarios
-            SET codigo_recuperacao = $1,
-                codigo_expiracao = $2
-            WHERE email = $3
-            RETURNING *`,
-            [codigo, expiracao, email]
-        );
-
-        console.log(update.rows);
+        await usuariosRepository.salvarCodigoRecuperacao(email, codigo, expiracao);
 
         await transporter.sendMail({
             from: "luiseduardodevv@gmail.com",
@@ -186,7 +157,6 @@ usuarios.post("/solicitarRecuperacao", async (req, res) => {
     }
 });
 
-
 usuarios.put("/redefinir", async (req, res) => {
     try {
         const { email, codigo, senha } = req.body;
@@ -197,18 +167,13 @@ usuarios.put("/redefinir", async (req, res) => {
             });
         }
 
-        const resultado = await pool.query(
-            "SELECT * FROM usuarios WHERE email = $1",
-            [email]
-        );
+        const usuario = await usuariosRepository.buscarUsuarioPorEmail(email);
 
-        if (resultado.rows.length === 0) {
+        if (!usuario) {
             return res.status(404).json({
                 erro: "Usuário não encontrado."
             });
         }
-
-        const usuario = resultado.rows[0];
 
         if (usuario.codigo_recuperacao !== codigo) {
             return res.status(400).json({
@@ -224,14 +189,7 @@ usuarios.put("/redefinir", async (req, res) => {
 
         const senhaCriptografada = await bcrypt.hash(senha, 10);
 
-        await pool.query(
-            `UPDATE usuarios
-             SET senha = $1,
-                 codigo_recuperacao = NULL,
-                 codigo_expiracao = NULL
-             WHERE id_usuario = $2`,
-            [senhaCriptografada, usuario.id_usuario]
-        );
+        await usuariosRepository.redefinirSenha(usuario.id_usuario, senhaCriptografada);
 
         res.status(200).json({
             mensagem: "Senha redefinida com sucesso."
@@ -245,22 +203,14 @@ usuarios.put("/redefinir", async (req, res) => {
     }
 });
 
-usuarios.put("editar/:id", async (req, res) => {
+usuarios.put("/editar/:id", async (req, res) => {
     try {
         const { id } = req.params;
         const { nome, matricula, email } = req.body;
 
-        const resultado = await pool.query(
-            `UPDATE usuarios
-             SET nome = $1,
-                 matricula = $2,
-                 email = $3
-             WHERE id_usuario = $4
-             RETURNING *`,
-            [nome, matricula, email, id]
-        );
+        const usuarioAtualizado = await usuariosRepository.atualizarUsuario(id, nome, matricula, email);
 
-        if (resultado.rows.length === 0) {
+        if (!usuarioAtualizado) {
             return res.status(404).json({
                 erro: "Usuário não encontrado."
             });
@@ -268,7 +218,7 @@ usuarios.put("editar/:id", async (req, res) => {
 
         res.status(200).json({
             mensagem: "Usuário atualizado com sucesso!",
-            usuario: resultado.rows[0]
+            usuario: usuarioAtualizado
         });
 
     } catch (error) {
@@ -279,15 +229,15 @@ usuarios.put("editar/:id", async (req, res) => {
     }
 });
 
-usuarios.delete("delete/:id", async (req, res) => {
+usuarios.delete("/delete/:id", async (req, res) => {
     try {
         const {id} = req.params;
 
-        const resultado = await pool.query("DELETE FROM usuarios WHERE id_usuario = $1 RETURNING *", [id]);
+        const usuarioDeletado = await usuariosRepository.deletarUsuario(id);
 
-        if(resultado.rows.length === 0){
+        if(!usuarioDeletado){
             return res.status(404).json({erro: "Usuário não encontrado."});
-        };
+        }
 
         res.status(200).json({
             mensagem: "Usuário excluído com sucesso!"
