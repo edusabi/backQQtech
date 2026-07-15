@@ -67,11 +67,40 @@ async function removerVinculo(idUsuario, idPerfil) {
     return resultado.rows[0]; 
 }
 
+async function adicionarVinculos(idUsuario, perfisIds) {
+    const promessas = perfisIds.map(idPerfil => 
+        pool.query(
+            `INSERT INTO perfil_usuario (id_usuario, id_perfil, data_vinculo)
+             VALUES ($1, $2, CURRENT_TIMESTAMP)
+             RETURNING *`,
+            [idUsuario, idPerfil]
+        )
+    );
+
+    const resultados = await Promise.all(promessas);
+    return resultados.map(res => res.rows[0]); 
+}
+
+async function editarVinculos(idUsuario, perfisIds) {
+    await pool.query(
+        `DELETE FROM perfil_usuario WHERE id_usuario = $1`,
+        [idUsuario]
+    );
+
+    if (perfisIds && perfisIds.length > 0) {
+        return await adicionarVinculos(idUsuario, perfisIds);
+    }
+
+    return []; 
+}
+
 module.exports = {
     listarPerfis,
     criarPerfil,
     atualizarPerfil,
     deletarPerfil,
     listarVinculos,
-    removerVinculo
+    removerVinculo,
+    adicionarVinculos,
+    editarVinculos
 };

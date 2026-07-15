@@ -115,4 +115,51 @@ perfil.delete("/vincular/:idUsuario/:idPerfil", async (req, res) => {
     }
 });
 
+perfil.post("/vincular", async (req, res) => {
+    try {
+        const { id_usuario, perfis } = req.body;
+
+        if (!id_usuario || !Array.isArray(perfis) || perfis.length === 0) {
+            return res.status(400).json({ 
+                erro: "Informe o id_usuario e um array de perfis (ex: [1, 2])." 
+            });
+        }
+
+        const novosVinculos = await perfisRepository.adicionarVinculos(id_usuario, perfis);
+
+        res.status(201).json({
+            mensagem: "Vínculos criados com sucesso.",
+            vinculos: novosVinculos
+        });
+
+    } catch (erro) {
+        console.error("Erro ao criar vínculos:", erro);
+        res.status(500).json({ erro: "Erro ao criar vínculos." });
+    }
+});
+
+perfil.put("/vincular/:idUsuario", async (req, res) => {
+    try {
+        const { idUsuario } = req.params;
+        const { perfis } = req.body;
+
+        if (!Array.isArray(perfis)) {
+            return res.status(400).json({ 
+                erro: "Informe um array de perfis válido (pode ser vazio se quiser remover todos)." 
+            });
+        }
+
+        const vinculosAtualizados = await perfisRepository.editarVinculos(idUsuario, perfis);
+
+        res.status(200).json({
+            mensagem: "Vínculos atualizados com sucesso.",
+            vinculos: vinculosAtualizados
+        });
+
+    } catch (erro) {
+        console.error("Erro ao editar vínculos:", erro);
+        res.status(500).json({ erro: "Erro ao editar vínculos." });
+    }
+});
+
 module.exports = perfil;
